@@ -1,0 +1,17 @@
+{
+  "name": "langchain-study",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.0.2",
+    "@langchain/openai": "^1.0.0",
+    "langchain": "^1.0.2"
+  }
+}
