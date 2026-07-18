@@ -1,351 +1,207 @@
-我建议直接把整个项目定位成 **「使用 TypeScript 从零实现一个 Agent Framework」**，而不是“学习如何使用 LangGraph”。这样最后得到的是一个类似 **LiteLLM + LangGraph + OpenAI Agents SDK** 的轻量版框架。
+我建议把目标再明确一点：
 
-另外，我建议技术栈统一一下：
+> **目标不是学习 Agent，而是从零实现一个 TypeScript Agent Framework。**
 
-- **Runtime**：Node.js 22+
-- **Language**：TypeScript 5.x
-- **Package Manager**：pnpm
-- **Framework**：前期不依赖框架，后期可接入 Next.js/Fastify
-- **Schema**：Zod（代替 Pydantic）
-- **Validation**：Zod
-- **Storage**：PostgreSQL + pgvector、Redis
-- **Browser**：Playwright
-- **Embedding**：OpenAI / VoyageAI / Jina 等
-- **ORM**：Drizzle ORM 或 Prisma
-- **Workflow**：前期自己实现，后面对比 LangGraph
+整个学习路线围绕一句话展开：
 
----
+> **每完成一个 Phase，就完成 Agent Framework 的一个核心模块。**
 
-# Phase 0：LLM Abstraction Layer
+最终实现的框架能力对标：
 
-> 目标：实现一个统一的模型接口，让 Agent 完全不关心底层是 GPT、Claude、Gemini 还是本地模型。
+- **Model Layer**：LiteLLM / Vercel AI SDK
+- **Agent Layer**：OpenAI Agents SDK
+- **Workflow**：LangGraph
+- **Memory**：MemGPT / Letta
+- **RAG**：LlamaIndex
+- **Multi-Agent**：AutoGen / CrewAI
 
 ---
 
-## 为什么要做
+# 最终目录
 
-如果直接这样写：
+建议整个项目采用 Monorepo：
+
+```text
+agent-framework/
+
+├── apps/
+│   ├── playground/          # Demo
+│   ├── web-chat/            # Next.js Chat
+│   └── docs/                # 文档
+│
+├── packages/
+│
+│   ├── core/                # Agent Core
+│
+│   ├── llm/                 # Model Provider
+│
+│   ├── prompt/
+│
+│   ├── tools/
+│
+│   ├── memory/
+│
+│   ├── rag/
+│
+│   ├── workflow/
+│
+│   ├── browser/
+│
+│   ├── code/
+│
+│   ├── multi-agent/
+│
+│   ├── evaluation/
+│
+│   └── common/
+│
+└── examples/
+```
+
+整个学习路线，就是不断填满这些 package。
+
+---
+
+# Phase 0：Model Layer（LLM Abstraction）
+
+## 学习目标
+
+实现一个统一的模型接口，让 Agent 不依赖任何模型 SDK。
+
+**最终能力**
 
 ```ts
-const client = new OpenAI();
+const agent = new Agent({
+  llm: new OpenAIModel(),
+});
 
-const res = await client.chat.completions.create({
-  model: "gpt-5",
-  messages,
+// ↓
+
+// 一行不改
+
+const agent = new Agent({
+  llm: new ClaudeModel(),
 });
 ```
 
-整个项目都会和 OpenAI SDK 强绑定。
-
-以后换 Claude：
-
-```ts
-const client = new Anthropic(...)
-```
-
-所有代码都要改。
-
-所以第一步就是抽象 Model Layer。
-
 ---
 
-# 技术点
+## 技术点
+
+### Message Protocol
 
 学习：
 
-- Chat Completion
-- Streaming
-- Structured Output
-- Tool Calling
-- Message Protocol
-- Token Usage
-- Model Adapter Pattern
+- Chat Message
+- Role
+- System Prompt
+- Tool Message
 
----
-
-# 实现思路
-
-整个架构：
-
-```text
-Agent
-
-     │
-
-LLM Interface
-
-     │
-
-──────────────────────────
-
-OpenAI Adapter
-
-Claude Adapter
-
-Gemini Adapter
-
-Ollama Adapter
+实现：
 
 ```
-
-Agent 永远调用：
-
-```ts
-llm.chat(...)
-```
-
-而不是：
-
-```ts
-openai.chat(...)
-```
-
----
-
-# 推荐目录
-
-```text
-packages/
-
-    core/
-
-        llm/
-
-            base.ts
-            message.ts
-            response.ts
-
-            openai.ts
-            claude.ts
-            gemini.ts
-
-        agent/
-
-        tools/
-
-apps/
-
-    playground/
-
-```
-
-以后直接发展成 Monorepo。
-
----
-
-# Message 定义
-
-```ts
-export type Role = "system" | "user" | "assistant" | "tool";
-
-export interface Message {
-  role: Role;
-
-  content: string;
-}
-```
-
-以后 Claude、Gemini 全部转换成这个结构。
-
----
-
-# Response
-
-```ts
-export interface LLMUsage {
-  promptTokens: number;
-
-  completionTokens: number;
-
-  totalTokens: number;
-}
-
-export interface ToolCall {
-  id: string;
-
-  name: string;
-
-  arguments: Record<string, unknown>;
-}
-
-export interface LLMResponse {
-  content: string;
-
-  toolCalls?: ToolCall[];
-
-  usage?: LLMUsage;
-
-  finishReason?: string;
-}
-```
-
-以后无论什么模型：
-
-全部转换成：
-
-```ts
-LLMResponse;
-```
-
----
-
-# Base LLM
-
-```ts
-export interface ChatOptions {
-  messages: Message[];
-}
-
-export interface BaseLLM {
-  chat(options: ChatOptions): Promise<LLMResponse>;
-}
-```
-
-以后所有模型：
-
-```ts
-class OpenAIModel
-
-implements BaseLLM
-```
-
----
-
-# OpenAI Adapter
-
-例如：
-
-```ts
-export class OpenAIModel implements BaseLLM {
-  constructor(private client: OpenAI) {}
-
-  async chat(options: ChatOptions): Promise<LLMResponse> {
-    const result = await this.client.chat.completions.create({
-      model: "gpt-5",
-
-      messages: options.messages,
-    });
-
-    return {
-      content: result.choices[0].message.content ?? "",
-
-      usage: {
-        promptTokens: result.usage?.prompt_tokens ?? 0,
-
-        completionTokens: result.usage?.completion_tokens ?? 0,
-
-        totalTokens: result.usage?.total_tokens ?? 0,
-      },
-    };
-  }
-}
-```
-
----
-
-# Claude Adapter
-
-Adapter 做的事情就是：
-
-```text
-Claude Response
+Message
 
 ↓
 
-Parse
+Model Adapter
 
 ↓
 
+Provider Message
+```
+
+---
+
+### Response
+
+统一：
+
+```
 LLMResponse
-```
-
-Agent 永远不知道 Claude 长什么样。
-
----
-
-# Structured Output
-
-TypeScript 推荐：
-
-```ts
-import { z } from "zod";
-
-export const UserSchema = z.object({
-  name: z.string(),
-
-  age: z.number(),
-});
-```
-
-解析：
-
-```ts
-const user = UserSchema.parse(json);
-```
-
-以后所有输出：
-
-不要：
-
-```ts
-const obj = JSON.parse(text);
-```
-
-而是：
-
-```ts
-schema.parse();
-```
-
----
-
-# Streaming
-
-统一接口：
-
-```ts
-export interface BaseLLM {
-  stream(options: ChatOptions): AsyncIterable<string>;
-}
-```
-
-以后：
-
-```ts
-for await (
-    const token of llm.stream(...)
-) {
-
-    process.stdout.write(token);
-
-}
-```
-
-OpenAI SSE
 
 ↓
 
-Claude Stream
+content
+
+toolCalls
+
+usage
+
+finishReason
+```
+
+---
+
+### Streaming
+
+学习：
+
+- SSE
+- AsyncIterator
+- AbortController
+
+---
+
+### Structured Output
+
+学习：
+
+- Zod
+- JSON Schema
+- Retry
+
+---
+
+### Tool Calling
+
+统一：
+
+```
+OpenAI
 
 ↓
 
-Gemini Stream
+ToolCall
 
-全部隐藏。
+↓
+
+Claude
+
+↓
+
+ToolCall
+
+↓
+
+Gemini
+
+↓
+
+ToolCall
+```
 
 ---
 
-# Todo
+## Todo
 
-### 基础
+### Message
 
-- [ ] Message 类型
-- [ ] Response 类型
-- [ ] BaseLLM Interface
+- [ ] Message Type
+- [ ] Role
+- [ ] Conversation History
 
 ---
 
-### Adapter
+### Response
+
+- [ ] Usage
+- [ ] FinishReason
+- [ ] ToolCall
+
+---
+
+### Provider
 
 - [ ] OpenAI
 - [ ] Claude
@@ -356,82 +212,788 @@ Gemini Stream
 
 ### Streaming
 
-- [ ] AsyncIterable
-- [ ] AbortController
-- [ ] Retry
+- [ ] stream()
+- [ ] cancel()
+- [ ] timeout()
 
 ---
 
-### Structured Output
+### Validation
 
-- [ ] Zod Schema
+- [ ] Zod
 - [ ] JSON Parse
-- [ ] Validation
 - [ ] Retry
 
 ---
 
-### Usage
+## Demo
 
-- [ ] Token Usage
+实现：
+
+```
+playground/
+
+↓
+
+输入
+
+↓
+
+OpenAI
+
+↓
+
+Claude
+
+↓
+
+Gemini
+
+↓
+
+统一输出
+```
+
+---
+
+## 推荐资料
+
+### 学习源码
+
+★★★★★
+
+Vercel AI SDK
+
+★★★★★
+
+OpenAI Agents SDK
+
+★★★★☆
+
+LiteLLM
+
+★★★★☆
+
+LangChain ChatModel
+
+---
+
+# Phase 1：Agent Runtime（ReAct）
+
+## 学习目标
+
+实现 Agent Loop。
+
+最终：
+
+```
+Question
+
+↓
+
+Think
+
+↓
+
+Tool
+
+↓
+
+Observe
+
+↓
+
+Think
+
+↓
+
+Finish
+```
+
+---
+
+## 技术点
+
+学习：
+
+ReAct
+
+Agent State
+
+Iteration
+
+Context
+
+---
+
+## Todo
+
+- [ ] Agent
+- [ ] Loop
+- [ ] Max Iteration
+- [ ] State
+- [ ] History
+
+---
+
+## Demo
+
+```
+北京天气
+
+↓
+
+Agent
+
+↓
+
+Tool
+
+↓
+
+Answer
+```
+
+---
+
+## 推荐资料
+
+ReAct Paper
+
+OpenAI Agents SDK Runner
+
+---
+
+# Phase 2：Tool Framework
+
+目标：
+
+实现 Tool Framework。
+
+---
+
+## 技术点
+
+学习：
+
+Tool Registry
+
+Function Calling
+
+Permission
+
+MCP 思想
+
+---
+
+## Todo
+
+### Tool
+
+- [ ] BaseTool
+
+- [ ] Schema
+
+- [ ] Metadata
+
+---
+
+### Registry
+
+- [ ] register()
+
+- [ ] search()
+
+- [ ] invoke()
+
+---
+
+### 内置 Tool
+
+- [ ] Calculator
+
+- [ ] Search
+
+- [ ] File
+
+- [ ] HTTP
+
+- [ ] SQL
+
+---
+
+### Tool Runtime
+
+- [ ] Timeout
+
+- [ ] Retry
+
+- [ ] Error
+
+---
+
+## Demo
+
+Agent：
+
+```
+查询今天北京天气
+```
+
+↓
+
+自动调用：
+
+Weather Tool
+
+---
+
+## 推荐资料
+
+MCP
+
+OpenAI Function Calling
+
+---
+
+# Phase 3：Prompt Framework
+
+目标：
+
+实现 Prompt 管理。
+
+---
+
+学习：
+
+Prompt Template
+
+Prompt Version
+
+Few-shot
+
+Dynamic Prompt
+
+---
+
+Todo
+
+- [ ] Prompt Template
+
+- [ ] Variables
+
+- [ ] Render
+
+- [ ] Prompt Store
+
+---
+
+Demo：
+
+```
+{{name}}
+
+↓
+
+Tom
+```
+
+---
+
+参考：
+
+LangChain Prompt
+
+---
+
+# Phase 4：Structured Output
+
+目标：
+
+所有输出变对象。
+
+学习：
+
+Zod
+
+JSON Schema
+
+Retry
+
+---
+
+Todo
+
+- [ ] Object Parser
+
+- [ ] Validator
+
+- [ ] Auto Retry
+
+- [ ] Error Fix
+
+---
+
+Demo
+
+```
+LLM
+
+↓
+
+JSON
+
+↓
+
+Object
+```
+
+---
+
+# Phase 5：Memory
+
+学习：
+
+Conversation
+
+Semantic Memory
+
+Summary
+
+Retrieval
+
+---
+
+Todo
+
+Short Memory
+
+- [ ] History
+
+- [ ] Window
+
+Long Memory
+
+- [ ] Save
+
+- [ ] Search
+
+- [ ] Summary
+
+---
+
+参考：
+
+MemGPT
+
+Letta
+
+---
+
+# Phase 6：RAG
+
+目标：
+
+Agent 有知识。
+
+学习：
+
+Chunk
+
+Embedding
+
+Retriever
+
+Hybrid Search
+
+Rerank
+
+---
+
+Todo
+
+Loader
+
+- [ ] PDF
+
+- [ ] Markdown
+
+- [ ] Web
+
+Embedding
+
+- [ ] Chunk
+
+- [ ] Vector
+
+Search
+
+- [ ] Similarity
+
+- [ ] Hybrid
+
+- [ ] Rerank
+
+---
+
+Demo
+
+上传 PDF
+
+↓
+
+Agent 回答
+
+---
+
+参考：
+
+LlamaIndex
+
+LangChain
+
+---
+
+# Phase 7：Planning
+
+目标：
+
+复杂任务拆解。
+
+学习：
+
+CoT
+
+ToT
+
+Plan & Execute
+
+Task Graph
+
+---
+
+Todo
+
+- [ ] Planner
+
+- [ ] Task Queue
+
+- [ ] Dependency
+
+- [ ] Retry
+
+---
+
+Demo
+
+```
+开发博客
+
+↓
+
+Task1
+
+Task2
+
+Task3
+```
+
+---
+
+参考：
+
+BabyAGI
+
+AutoGPT
+
+---
+
+# Phase 8：Workflow Engine
+
+目标：
+
+实现 mini LangGraph。
+
+学习：
+
+State Machine
+
+Node
+
+Edge
+
+Checkpoint
+
+Resume
+
+---
+
+Todo
+
+- [ ] Node
+
+- [ ] Edge
+
+- [ ] Graph
+
+- [ ] State
+
+- [ ] Checkpoint
+
+---
+
+Demo
+
+```
+START
+
+↓
+
+PLAN
+
+↓
+
+EXECUTE
+
+↓
+
+CHECK
+
+↓
+
+END
+```
+
+---
+
+参考：
+
+LangGraph
+
+Temporal
+
+---
+
+# Phase 9：Browser Agent
+
+学习：
+
+Playwright
+
+DOM
+
+Vision
+
+Action
+
+---
+
+Todo
+
+- [ ] Open Page
+
+- [ ] Click
+
+- [ ] Input
+
+- [ ] Screenshot
+
+- [ ] OCR
+
+---
+
+参考：
+
+Browser Use
+
+Claude Computer Use
+
+---
+
+# Phase 10：Coding Agent
+
+目标：
+
+实现 mini Cursor。
+
+学习：
+
+Repo
+
+AST
+
+Tree-sitter
+
+Git
+
+---
+
+Todo
+
+- [ ] Read Repo
+
+- [ ] Search Symbol
+
+- [ ] Modify File
+
+- [ ] Run Test
+
+- [ ] Fix Error
+
+---
+
+参考：
+
+Cursor
+
+SWE-Agent
+
+OpenHands
+
+---
+
+# Phase 11：Multi-Agent
+
+学习：
+
+Manager
+
+Worker
+
+Reviewer
+
+Communication
+
+---
+
+Todo
+
+- [ ] Message Bus
+
+- [ ] Shared Memory
+
+- [ ] Agent Router
+
+- [ ] Agent Pool
+
+---
+
+Demo
+
+```
+Manager
+
+↓
+
+Research
+
+↓
+
+Coder
+
+↓
+
+Reviewer
+```
+
+---
+
+参考：
+
+AutoGen
+
+CrewAI
+
+MetaGPT
+
+---
+
+# Phase 12：Evaluation & Security
+
+学习：
+
+Tracing
+
+Metrics
+
+Permission
+
+Sandbox
+
+Prompt Injection
+
+---
+
+Todo
+
+Evaluation
+
+- [ ] Trace
+
 - [ ] Cost
-- [ ] Latency
+
+- [ ] Token
+
+- [ ] Success Rate
+
+Security
+
+- [ ] Tool Permission
+
+- [ ] Sandbox
+
+- [ ] Secret Manager
+
+- [ ] Prompt Injection Filter
 
 ---
 
-### 测试
+参考：
 
-最终应该做到：
+LangSmith
 
-```ts
-const agent = new Agent({
-  llm: new OpenAIModel(),
-});
-```
+Arize Phoenix
 
-切换：
-
-```ts
-const agent = new Agent({
-  llm: new ClaudeModel(),
-});
-```
-
-Agent 一行代码不用改。
+OpenTelemetry
 
 ---
 
-# 推荐参考项目（按学习价值排序）
+# 最终项目（Agent Framework v1）
 
-| 项目                           | 学习重点                                        |
-| ------------------------------ | ----------------------------------------------- |
-| OpenAI Agents SDK (TypeScript) | Agent、Tool、Runner、Trace 的整体设计           |
-| Vercel AI SDK                  | Provider 抽象、Streaming、UI 集成               |
-| LiteLLM                        | 多模型统一接口（虽然是 Python，但设计值得学习） |
-| LangChain.js                   | ChatModel、Runnable、Tool 抽象                  |
-| Mastra                         | TypeScript Agent Framework 的整体架构           |
-| AI SDK Core                    | Model、Prompt、Stream 的抽象方式                |
+最终实现的能力：
+
+| 模块              | 对标项目                       |
+| ----------------- | ------------------------------ |
+| Model Layer       | Vercel AI SDK / LiteLLM        |
+| Prompt            | LangChain Prompt               |
+| Tool Framework    | OpenAI Agents SDK              |
+| Agent Runtime     | OpenAI Agents SDK Runner       |
+| Structured Output | OpenAI Structured Output + Zod |
+| Memory            | MemGPT / Letta                 |
+| RAG               | LlamaIndex                     |
+| Planning          | AutoGPT / BabyAGI              |
+| Workflow          | LangGraph                      |
+| Browser           | Browser Use                    |
+| Coding Agent      | Cursor / OpenHands             |
+| Multi-Agent       | AutoGen / CrewAI               |
+| Evaluation        | LangSmith                      |
+| Security          | MCP + Sandbox + Permission     |
 
 ---
 
-## 我建议再升级一步：整个教程不是"实现一个 Agent"，而是**实现一个 mini Agent Framework**。
+## 每个 Phase 建议固定交付物
 
-也就是每一阶段都遵循：
+为了保证不是“学完就忘”，建议每个阶段都完成以下内容：
 
-```text
-设计（Why）
-    ↓
-接口（Interface）
-    ↓
-数据结构（Types）
-    ↓
-核心实现（Implementation）
-    ↓
-单元测试（Vitest）
-    ↓
-Demo（Playground）
-    ↓
-对标开源框架（LangChain / Vercel AI SDK / OpenAI Agents SDK）
-```
+- 🎯 **学习目标（Why）**：为什么需要这个模块，它解决什么问题。
+- 📚 **核心概念（What）**：涉及的理论、协议、数据结构和设计模式。
+- 🏗️ **架构设计（Architecture）**：模块关系图、时序图、状态流。
+- 🔧 **接口设计（Interface）**：TypeScript 类型、抽象类、公共 API。
+- 💻 **核心实现（Implementation）**：一步步实现关键逻辑。
+- ✅ **Todo Checklist**：可勾选的开发任务。
+- 🧪 **单元测试（Vitest）**：覆盖核心功能和边界情况。
+- 🚀 **Demo（Playground）**：一个可运行的示例程序。
+- 📖 **源码阅读（Reference）**：对应优秀开源项目的相关模块。
+- 📝 **阶段总结（Review）**：学到了什么、还有哪些可优化点。
 
-这样到最后，你得到的不只是一个能运行的 Agent，而是一套具有可扩展性的 TypeScript Agent Framework。
+这样的路线完成后，你得到的不仅是一个可运行的 Agent，而是一套具备**框架设计、工程实践、可扩展架构**能力的 TypeScript Agent Framework。
