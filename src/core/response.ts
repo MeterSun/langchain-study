@@ -1,13 +1,9 @@
+import type { ToolCall } from "./type";
+
 export interface LLMUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
-}
-
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
 }
 
 export interface LLMResponse {
