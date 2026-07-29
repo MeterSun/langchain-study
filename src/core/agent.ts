@@ -1,14 +1,19 @@
 import type { BaseLLM } from "./base";
-import type { AgentState, AgentStepEvent, ToolCall } from "./type";
+import type { AgentState, AgentStepEvent } from "./type";
 import type { Tool } from "./tool";
+import type { InvokeOptions } from "./registry";
+import { ToolRegistry } from "./registry";
 import type { PromptLike, PromptVariables } from "./prompt";
 
 export interface AgentOptions {
   llm: BaseLLM;
   tools?: Tool[];
+  registry?: ToolRegistry;
   systemPrompt?: string | PromptLike;
   maxIterations?: number;
   onStep?: (event: AgentStepEvent) => void;
+  /** 工具执行的默认运行时参数（timeout/retry）。 */
+  toolInvokeOptions?: InvokeOptions;
 }
 
 export interface RunOptions {
@@ -17,20 +22,31 @@ export interface RunOptions {
 
 export class Agent {
   llm: BaseLLM;
-  tools: Tool[];
+  /** 统一注册中心：tools 数组的工具也会被合并进 registry。 */
+  registry: ToolRegistry;
   systemPrompt?: string | PromptLike;
   maxIterations: number;
   onStep?: (event: AgentStepEvent) => void;
+  toolInvokeOptions?: InvokeOptions;
 
   private state: AgentState;
 
   constructor(params: AgentOptions) {
     this.llm = params.llm;
-    this.tools = params.tools ?? [];
+    this.registry = params.registry ?? new ToolRegistry();
+    if (params.tools?.length) {
+      this.registry.registerAll(params.tools);
+    }
     this.systemPrompt = params.systemPrompt;
     this.maxIterations = params.maxIterations ?? 10;
     this.onStep = params.onStep;
+    this.toolInvokeOptions = params.toolInvokeOptions;
     this.state = { messages: [], iteration: 0 };
+  }
+
+  /** 向后兼容：访问当前所有工具。 */
+  get tools(): Tool[] {
+    return this.registry.list();
   }
 
   /** 获取当前 Agent 状态（只读快照）。 */
@@ -96,9 +112,9 @@ export class Agent {
         toolCalls: res.toolCalls,
       });
 
-      // Execute each tool call
+      // Execute each tool call via registry (带 timeout/retry 保护)
       for (const tc of res.toolCalls) {
-        const tool = this.tools.find((t) => t.name === tc.name);
+        const tool = this.registry.get(tc.name);
         if (!tool) {
           const msg = `Tool "${tc.name}" not found`;
           this.state.messages.push({
@@ -115,7 +131,11 @@ export class Agent {
           continue;
         }
         try {
-          const result = await tool.execute(tc.arguments);
+          const result = await this.registry.invokeTool(
+            tool,
+            tc.arguments,
+            this.toolInvokeOptions,
+          );
           this.state.messages.push({
             role: "tool",
             content: result,
