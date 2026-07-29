@@ -1,4 +1,5 @@
 import type { Tool, ToolMetadata } from "./tool";
+import type { ToolContext } from "./type";
 
 export interface InvokeOptions {
   /** 单次执行超时（毫秒），超时抛错。 */
@@ -78,12 +79,13 @@ export class ToolRegistry {
     name: string,
     args: Record<string, unknown>,
     options?: InvokeOptions,
+    context?: ToolContext,
   ): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool "${name}" not found in registry`);
     }
-    return this.invokeTool(tool, args, options);
+    return this.invokeTool(tool, args, options, context);
   }
 
   /** 直接对 Tool 实例执行（即使未注册也能用 timeout/retry）。 */
@@ -91,6 +93,7 @@ export class ToolRegistry {
     tool: Tool,
     args: Record<string, unknown>,
     options?: InvokeOptions,
+    context?: ToolContext,
   ): Promise<string> {
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT;
     const retries = options?.retries ?? 0;
@@ -99,7 +102,7 @@ export class ToolRegistry {
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        return await this.executeWithTimeout(tool, args, timeoutMs);
+        return await this.executeWithTimeout(tool, args, timeoutMs, context);
       } catch (e) {
         lastError = e;
         // 超时/错误时按需重试
@@ -117,13 +120,13 @@ export class ToolRegistry {
     tool: Tool,
     args: Record<string, unknown>,
     timeoutMs: number,
+    context?: ToolContext,
   ): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      // 把 signal 通过 args 传给工具（工具可选地使用）
       const result = await Promise.race([
-        tool.execute(args),
+        tool.execute(args, context),
         new Promise<never>((_, reject) => {
           controller.signal.addEventListener("abort", () => {
             reject(new Error(`Tool "${tool.name}" timed out after ${timeoutMs}ms`));

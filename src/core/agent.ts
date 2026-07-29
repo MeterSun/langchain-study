@@ -1,5 +1,5 @@
 import type { BaseLLM } from "./base";
-import type { AgentState, AgentStepEvent } from "./type";
+import type { AgentState, AgentStepEvent, ToolContext } from "./type";
 import type { Tool } from "./tool";
 import type { InvokeOptions } from "./registry";
 import { ToolRegistry } from "./registry";
@@ -14,6 +14,8 @@ export interface AgentOptions {
   onStep?: (event: AgentStepEvent) => void;
   /** 工具执行的默认运行时参数（timeout/retry）。 */
   toolInvokeOptions?: InvokeOptions;
+  /** 工具共享上下文，工具执行时可读写。 */
+  context?: ToolContext;
 }
 
 export interface RunOptions {
@@ -28,6 +30,8 @@ export class Agent {
   maxIterations: number;
   onStep?: (event: AgentStepEvent) => void;
   toolInvokeOptions?: InvokeOptions;
+  /** 工具共享上下文，工具执行时可读写。 */
+  context: ToolContext;
 
   private state: AgentState;
 
@@ -41,6 +45,7 @@ export class Agent {
     this.maxIterations = params.maxIterations ?? 10;
     this.onStep = params.onStep;
     this.toolInvokeOptions = params.toolInvokeOptions;
+    this.context = params.context ?? {};
     this.state = { messages: [], iteration: 0 };
   }
 
@@ -135,6 +140,7 @@ export class Agent {
             tool,
             tc.arguments,
             this.toolInvokeOptions,
+            this.context,
           );
           this.state.messages.push({
             role: "tool",

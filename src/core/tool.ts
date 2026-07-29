@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { ToolContext } from "./type";
 
 export interface ToolMetadata {
   /** 功能分类，便于 search 过滤，例如 "math"、"network"、"filesystem"。 */
@@ -16,7 +17,7 @@ export interface Tool {
   description: string;
   parameters: z.ZodType;
   metadata?: ToolMetadata;
-  execute: (args: Record<string, unknown>) => Promise<string>;
+  execute: (args: Record<string, unknown>, context?: ToolContext) => Promise<string>;
 }
 
 /**
@@ -28,13 +29,14 @@ export function defineTool<S extends z.ZodObject>(params: {
   description: string;
   parameters: S;
   metadata?: ToolMetadata;
-  execute: (args: z.infer<S>) => Promise<string>;
+  execute: (args: z.infer<S>, context?: ToolContext) => Promise<string>;
 }): Tool {
   return {
     name: params.name,
     description: params.description,
     parameters: params.parameters,
     metadata: params.metadata,
-    execute: (args) => params.execute(params.parameters.parse(args)),
+    execute: (args, context) =>
+      params.execute(params.parameters.parse(args), context),
   };
 }
