@@ -12,3 +12,19 @@ export interface Message {
   toolCalls?: ToolCall[];
   toolCallId?: string;
 }
+
+export type StepType = "think" | "tool" | "finish" | "error";
+
+export interface AgentStepEvent {
+  type: StepType;
+  iteration: number;
+  message: string;
+  toolCall?: ToolCall;
+  toolResult?: string;
+}
+
+export interface AgentState {
+  messages: Message[];
+  iteration: number;
+  lastStep?: AgentStepEvent;
+}
