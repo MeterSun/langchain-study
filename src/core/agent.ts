@@ -1,18 +1,23 @@
 import type { BaseLLM } from "./base";
 import type { Message } from "./type";
 import type { Tool } from "./tool";
+import type { PromptLike, PromptVariables } from "./prompt";
 
 export interface AgentOptions {
   llm: BaseLLM;
   tools?: Tool[];
-  systemPrompt?: string;
+  systemPrompt?: string | PromptLike;
   maxIterations?: number;
+}
+
+export interface RunOptions {
+  promptVariables?: PromptVariables;
 }
 
 export class Agent {
   llm: BaseLLM;
   tools: Tool[];
-  systemPrompt?: string;
+  systemPrompt?: string | PromptLike;
   maxIterations: number;
 
   constructor(params: AgentOptions) {
@@ -24,11 +29,16 @@ export class Agent {
 
   /**
    * 跑 LLM ↔ Tool 循环，直到 LLM 不再发起 tool call，返回最终文本。
+   * systemPrompt 若为 PromptLike，会用 promptVariables 渲染。
    */
-  async run(input: string): Promise<string> {
+  async run(input: string, options?: RunOptions): Promise<string> {
     const messages: Message[] = [];
     if (this.systemPrompt) {
-      messages.push({ role: "system", content: this.systemPrompt });
+      const content =
+        typeof this.systemPrompt === "string"
+          ? this.systemPrompt
+          : this.systemPrompt.render(options?.promptVariables);
+      messages.push({ role: "system", content });
     }
     messages.push({ role: "user", content: input });
 
