@@ -1,9 +1,11 @@
 import type { BaseLLM } from "./base";
-import type { AgentState, AgentStepEvent, ToolContext } from "./type";
+import type { AgentStepEvent, Message, ToolContext } from "./type";
 import type { Tool } from "./tool";
 import type { InvokeOptions } from "./registry";
 import { ToolRegistry } from "./registry";
 import type { PromptLike, PromptVariables } from "./prompt";
+import type { BaseMemory } from "./memory";
+import { WindowMemory } from "./memory";
 
 export interface AgentOptions {
   llm: BaseLLM;
@@ -16,6 +18,8 @@ export interface AgentOptions {
   toolInvokeOptions?: InvokeOptions;
   /** 工具共享上下文，工具执行时可读写。 */
   context?: ToolContext;
+  /** 对话记忆策略。默认 WindowMemory（无限制）。 */
+  memory?: BaseMemory;
 }
 
 export interface RunOptions {
@@ -32,8 +36,11 @@ export class Agent {
   toolInvokeOptions?: InvokeOptions;
   /** 工具共享上下文，工具执行时可读写。 */
   context: ToolContext;
+  /** 对话记忆策略。 */
+  memory: BaseMemory;
 
-  private state: AgentState;
+  private iteration = 0;
+  private lastStep?: AgentStepEvent;
 
   constructor(params: AgentOptions) {
     this.llm = params.llm;
@@ -46,7 +53,7 @@ export class Agent {
     this.onStep = params.onStep;
     this.toolInvokeOptions = params.toolInvokeOptions;
     this.context = params.context ?? {};
-    this.state = { messages: [], iteration: 0 };
+    this.memory = params.memory ?? new WindowMemory();
   }
 
   /** 向后兼容：访问当前所有工具。 */
@@ -55,63 +62,69 @@ export class Agent {
   }
 
   /** 获取当前 Agent 状态（只读快照）。 */
-  getState(): Readonly<AgentState> {
-    return this.state;
+  getState(): Readonly<{
+    messages: Message[];
+    iteration: number;
+    lastStep?: AgentStepEvent;
+  }> {
+    return {
+      messages: this.memory.getAll(),
+      iteration: this.iteration,
+      lastStep: this.lastStep,
+    };
   }
 
   /** 清空所有历史消息，重置迭代计数。 */
   reset(): void {
-    this.state = { messages: [], iteration: 0 };
+    this.memory.clear();
+    this.iteration = 0;
+    this.lastStep = undefined;
   }
 
   /**
    * 跑 LLM ↔ Tool 循环，直到 LLM 不再发起 tool call，返回最终文本。
-   * 多次调用会累积对话历史。
+   * 多次调用会累积对话历史（由 memory 策略决定如何压缩）。
    */
   async run(input: string, options?: RunOptions): Promise<string> {
+    // system prompt 仅首轮注入
     const content =
-      this.systemPrompt && this.state.messages.length === 0
+      this.systemPrompt && this.memory.getAll().length === 0
         ? typeof this.systemPrompt === "string"
           ? this.systemPrompt
           : this.systemPrompt.render(options?.promptVariables)
         : undefined;
 
     if (content) {
-      this.state.messages.push({ role: "system", content });
+      this.memory.add({ role: "system", content });
     }
-    this.state.messages.push({ role: "user", content: input });
+    this.memory.add({ role: "user", content: input });
 
-    for (
-      this.state.iteration = 0;
-      this.state.iteration < this.maxIterations;
-      this.state.iteration++
-    ) {
+    for (this.iteration = 0; this.iteration < this.maxIterations; this.iteration++) {
+      // 从 memory 获取（可能已压缩/截断的）消息列表
+      const messages = await this.memory.getMessages();
       const res = await this.llm.chat({
-        messages: this.state.messages,
+        messages,
         tools: this.tools.length > 0 ? this.tools : undefined,
       });
 
       // Think step
       this.emit({
         type: "think",
-        iteration: this.state.iteration,
+        iteration: this.iteration,
         message: res.content || "(no content)",
       });
 
       if (!res.toolCalls || res.toolCalls.length === 0) {
-        this.state.messages.push({
-          role: "assistant",
-          content: res.content,
-        });
+        this.memory.add({ role: "assistant", content: res.content });
         this.emit({
           type: "finish",
-          iteration: this.state.iteration,
+          iteration: this.iteration,
           message: res.content,
         });
         return res.content;
       }
 
-      this.state.messages.push({
+      this.memory.add({
         role: "assistant",
         content: res.content,
         toolCalls: res.toolCalls,
@@ -122,14 +135,10 @@ export class Agent {
         const tool = this.registry.get(tc.name);
         if (!tool) {
           const msg = `Tool "${tc.name}" not found`;
-          this.state.messages.push({
-            role: "tool",
-            content: msg,
-            toolCallId: tc.id,
-          });
+          this.memory.add({ role: "tool", content: msg, toolCallId: tc.id });
           this.emit({
             type: "error",
-            iteration: this.state.iteration,
+            iteration: this.iteration,
             message: msg,
             toolCall: tc,
           });
@@ -142,28 +151,24 @@ export class Agent {
             this.toolInvokeOptions,
             this.context,
           );
-          this.state.messages.push({
-            role: "tool",
-            content: result,
-            toolCallId: tc.id,
-          });
+          this.memory.add({ role: "tool", content: result, toolCallId: tc.id });
           this.emit({
             type: "tool",
-            iteration: this.state.iteration,
+            iteration: this.iteration,
             message: `Tool "${tc.name}" executed`,
             toolCall: tc,
             toolResult: result,
           });
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
-          this.state.messages.push({
+          this.memory.add({
             role: "tool",
             content: `Error: ${errMsg}`,
             toolCallId: tc.id,
           });
           this.emit({
             type: "error",
-            iteration: this.state.iteration,
+            iteration: this.iteration,
             message: `Tool "${tc.name}" error: ${errMsg}`,
             toolCall: tc,
           });
@@ -177,7 +182,7 @@ export class Agent {
   }
 
   private emit(event: AgentStepEvent): void {
-    this.state.lastStep = event;
+    this.lastStep = event;
     this.onStep?.(event);
   }
 }
