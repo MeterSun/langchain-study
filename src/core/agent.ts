@@ -6,6 +6,7 @@ import { ToolRegistry } from "./registry";
 import type { PromptLike, PromptVariables } from "./prompt";
 import type { BaseMemory } from "./memory";
 import { WindowMemory } from "./memory";
+import type { Retriever } from "./rag";
 
 export interface AgentOptions {
   llm: BaseLLM;
@@ -20,6 +21,8 @@ export interface AgentOptions {
   context?: ToolContext;
   /** 对话记忆策略。默认 WindowMemory（无限制）。 */
   memory?: BaseMemory;
+  /** RAG 检索器。设置后每次 run 会先检索相关文档注入 context。 */
+  retriever?: Retriever;
 }
 
 export interface RunOptions {
@@ -38,6 +41,8 @@ export class Agent {
   context: ToolContext;
   /** 对话记忆策略。 */
   memory: BaseMemory;
+  /** RAG 检索器（可选）。 */
+  retriever?: Retriever;
 
   private iteration = 0;
   private lastStep?: AgentStepEvent;
@@ -54,6 +59,19 @@ export class Agent {
     this.toolInvokeOptions = params.toolInvokeOptions;
     this.context = params.context ?? {};
     this.memory = params.memory ?? new WindowMemory();
+    this.retriever = params.retriever;
+
+    // 互斥校验：retriever（自动注入）和 rag-tool（Tool 调用）不能同时使用，
+    // 否则每次 run 会既自动检索又触发 LLM 调用 rag_search，造成重复检索和 context 冗余。
+    if (this.retriever) {
+      const ragTool = this.tools.find((t) => t.metadata?.category === "rag");
+      if (ragTool) {
+        throw new Error(
+          `Agent 不能同时设置 retriever 和 rag-tool（工具 "${ragTool.name}" 的 metadata.category="rag"）。` +
+            `自动注入模式只用 retriever；Tool 模式只用 rag-tool，请二选一。`,
+        );
+      }
+    }
   }
 
   /** 向后兼容：访问当前所有工具。 */
@@ -97,6 +115,19 @@ export class Agent {
     if (content) {
       this.memory.add({ role: "system", content });
     }
+
+    // RAG：检索相关文档，作为参考资料注入 context
+    if (this.retriever) {
+      const docs = await this.retriever.retrieve(input);
+      if (docs.length > 0) {
+        const context = docs.map((d) => d.content).join("\n\n");
+        this.memory.add({
+          role: "system",
+          content: `参考资料（请基于以下内容回答）：\n${context}`,
+        });
+      }
+    }
+
     this.memory.add({ role: "user", content: input });
 
     for (this.iteration = 0; this.iteration < this.maxIterations; this.iteration++) {
