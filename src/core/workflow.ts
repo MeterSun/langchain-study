@@ -213,7 +213,10 @@ export class CompiledGraph<S> {
     const saver = options?.checkpointSaver;
     const threadId = options?.threadId;
     const resume = options?.resume ?? true;
-    const resumeValue = options?.resumeValue;
+    // resumeValue 只对"被中断节点"的那一次执行生效，消费后清除。
+    // 否则图有环时，第二次走到 interrupt 节点会再次读到同一个值，
+    // 永远走不出循环（如 review rejected → plan → execute → review 又 rejected）。
+    let pendingResume = options?.resumeValue;
 
     let current = START;
     let iteration = 0;
@@ -249,13 +252,13 @@ export class CompiledGraph<S> {
         }
         onEvent?.({ type: "node_start", node: current, state });
 
-        // 用 AsyncLocalStorage 注入 resumeValue，让节点内的 interrupt() 能读到
+        // 用 AsyncLocalStorage 注入 pendingResume，让节点内的 interrupt() 能读到
         const exec = () => fn(state);
         let patch: Partial<S>;
         try {
           patch =
-            resumeValue !== undefined
-              ? await resumeStorage.run(resumeValue, exec)
+            pendingResume !== undefined
+              ? await resumeStorage.run(pendingResume, exec)
               : await exec();
         } catch (e) {
           if (e instanceof InterruptError) {
@@ -276,6 +279,11 @@ export class CompiledGraph<S> {
           }
           throw e;
         }
+
+        // 节点 fn 正常完成（未抛 InterruptError），resumeValue 已被消费，清除之。
+        // 注意：抛 InterruptError 时 pendingResume 必然是 undefined（若非 undefined，
+        // interrupt() 会直接返回值而不抛错），所以无需在 catch 里清除。
+        pendingResume = undefined;
 
         state = this.reducer(state, patch);
         onEvent?.({ type: "node_end", node: current, patch, state });

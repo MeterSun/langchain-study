@@ -14,11 +14,11 @@ import {
 
 interface ResearchState {
   topic: string;
-  outline?: string;       // plan 输出：研究大纲
-  draft?: string;          // execute 输出：草稿
-  approval?: string;       // review 输出（interrupt）：approved/rejected
-  finalReport?: string;    // finalize 输出
-  attempt: number;         // 重试次数（rejected 后 +1）
+  outline?: string; // plan 输出：研究大纲
+  draft?: string; // execute 输出：草稿
+  approval?: string; // review 输出（interrupt）：approved/rejected
+  finalReport?: string; // finalize 输出
+  attempt: number; // 重试次数（rejected 后 +1）
   log: string[];
 }
 
@@ -40,17 +40,24 @@ const plan = async (state: ResearchState): Promise<Partial<ResearchState>> => {
   });
   return {
     outline: res.content,
-    log: [`plan (attempt ${state.attempt + 1}): 生成大纲 ${res.content.length} 字`],
+    log: [
+      `plan (attempt ${state.attempt + 1}): 生成大纲 ${res.content.length} 字`,
+    ],
   };
 };
 
 // ─── 节点：execute（按大纲写草稿）──────────────────────────
 
-const executeNode = async (state: ResearchState): Promise<Partial<ResearchState>> => {
+const executeNode = async (
+  state: ResearchState,
+): Promise<Partial<ResearchState>> => {
   const res = await llm.chat({
     messages: [
       { role: "system", content: "你是科普作者。直接输出短文，不要寒暄。" },
-      { role: "user", content: `主题：${state.topic}\n\n大纲：\n${state.outline}\n\n请按大纲写一篇 200 字以内的科普短文。` },
+      {
+        role: "user",
+        content: `主题：${state.topic}\n\n大纲：\n${state.outline}\n\n请按大纲写一篇 200 字以内的科普短文。`,
+      },
     ],
   });
   return {
@@ -73,7 +80,9 @@ const review = (state: ResearchState): Partial<ResearchState> => {
 
 // ─── 节点：finalize（通过则定稿）───────────────────────────
 
-const finalize = async (state: ResearchState): Promise<Partial<ResearchState>> => {
+const finalize = async (
+  state: ResearchState,
+): Promise<Partial<ResearchState>> => {
   // 简单定稿：直接用 draft 作为 finalReport
   return {
     finalReport: state.draft,
@@ -108,7 +117,9 @@ const saver = new MemorySaver<ResearchState>();
 // ─── 执行 ───────────────────────────────────────────────────
 
 console.log("=== Workflow 综合演示：研究 → 草稿 → 人工审批 ===\n");
-console.log("图结构: START → plan → execute → review → (approved ? finalize : plan)\n");
+console.log(
+  "图结构: START → plan → execute → review → (approved ? finalize : plan)\n",
+);
 
 const topic = "量子计算的基本原理";
 console.log(`主题: ${topic}\n`);
@@ -123,8 +134,10 @@ const initialState: ResearchState = {
 const events: string[] = [];
 const logEvent = (e: WorkflowEvent<ResearchState>) => {
   const e2 = e as { type: string; node?: string; from?: string; to?: string };
-  if (e2.type === "node_start") events.push(`▶${e2.node}`);
-  else if (e2.type === "edge") events.push(`${e2.from}→${e2.to}`);
+  if (e2.type === "node_start") {
+    console.log(`  ▶ ${e2.node}`);
+    events.push(`▶${e2.node}`);
+  } else if (e2.type === "edge") events.push(`${e2.from}→${e2.to}`);
   else if (e2.type === "interrupt") events.push(`⏸interrupt@${e2.node}`);
   else if (e2.type === "finish") events.push(`✓finish`);
 };
